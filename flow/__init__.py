@@ -7,9 +7,14 @@ try:
 except Exception:  # pragma: no cover - package import should stay cheap outside Frappe
 	frappe = None
 else:
-	module_app = getattr(getattr(frappe, "local", None), "module_app", None)
-	if isinstance(module_app, dict):
-		module_app.setdefault("flow", "flow")
+	from flow.utils.bootstrap import ensure_flow_module_map
+
+	try:
+		ensure_flow_module_map()
+	except Exception:
+		module_app = getattr(getattr(frappe, "local", None), "module_app", None)
+		if isinstance(module_app, dict):
+			module_app.setdefault("flow", "flow")
 
 from flow.lib.agent import Agent, RunResult
 from flow.lib.model import ChatResponse, Model, ToolCall

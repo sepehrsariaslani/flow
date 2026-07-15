@@ -10,6 +10,7 @@ import frappe
 from frappe import _
 
 from flow.lib.tool import Tool, tool
+from flow.utils.bootstrap import ensure_flow_module_map
 from flow.utils.persian import (
 	erp_doctype_hints,
 	erp_record_field_hints,
@@ -514,6 +515,7 @@ def sync_builtin_tools() -> None:
 	guard in FlowTool.validate (which protects user edits, not system migration)."""
 	from flow.flow.doctype.flow_tool.flow_tool import FlowTool
 
+	ensure_flow_module_map()
 	frappe.controllers.setdefault(frappe.local.site, {})["Flow Tool"] = FlowTool
 	for builtin in BUILTIN_TOOLS:
 		import_path = f"flow.tools.builtins.{builtin.name}"

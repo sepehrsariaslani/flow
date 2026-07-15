@@ -10,10 +10,12 @@ from flow.assistant import (
 	sync_builtin_assistant,
 )
 from flow.tools.builtins import BUILTIN_TOOLS
+from flow.utils.bootstrap import ensure_flow_module_map
 
 
 class TestSyncBuiltinAssistant(IntegrationTestCase):
 	def setUp(self):
+		ensure_flow_module_map()
 		# Strip any Assistant from prior runs so each test starts clean.
 		if frappe.db.exists("Flow Agent", ASSISTANT_AGENT_TITLE):
 			frappe.db.set_value("Flow Agent", ASSISTANT_AGENT_TITLE, "is_system_generated", 0)
@@ -73,3 +75,16 @@ class TestSyncBuiltinAssistant(IntegrationTestCase):
 	def test_assistant_instructions_require_discovery_before_question(self):
 		self.assertIn("Before asking the user", ASSISTANT_INSTRUCTIONS)
 		self.assertIn("search_records", ASSISTANT_INSTRUCTIONS)
+
+	def test_sync_bootstraps_flow_module_map_when_missing(self):
+		site_controllers = frappe.controllers.setdefault(frappe.local.site, {})
+		site_controllers.pop("Flow Agent", None)
+		frappe.local.module_app.pop("flow", None)
+		frappe.local.app_modules["flow"] = []
+
+		sync_builtin_assistant(model=self.model.name)
+
+		self.assertEqual(frappe.local.module_app.get("flow"), "flow")
+		self.assertEqual(frappe.local.app_modules.get("flow"), ["flow"])
+		doc = frappe.get_doc("Flow Agent", ASSISTANT_AGENT_TITLE)
+		self.assertEqual(doc.model, self.model.name)

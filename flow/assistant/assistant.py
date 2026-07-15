@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import frappe
+from flow.utils.bootstrap import ensure_flow_module_map
 
 ASSISTANT_AGENT_TITLE = "Flow"
 ASSISTANT_MAX_ITERATIONS = 40
@@ -76,6 +77,7 @@ def sync_builtin_assistant(model: str | None = None) -> None:
 	"""Ensure the system Assistant agent exists and is up-to-date. Called from after_migrate and FlowModel.after_insert."""
 	from flow.tools.builtins import BUILTIN_TOOLS, sync_builtin_tools
 
+	ensure_flow_module_map()
 	sync_builtin_tools()
 
 	model_name = model or frappe.db.get_value("Flow Model", {"enabled": 1}, "name")
