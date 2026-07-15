@@ -2,6 +2,7 @@ import { createApp, watch } from "vue";
 import App from "@/App.vue";
 import { useStore } from "@/store";
 import { readPanelState, writePanelState } from "@/lib/panelState";
+import { __ } from "@/lib/translate";
 import "@/index.css";
 
 const PANEL_WIDTH = 420;

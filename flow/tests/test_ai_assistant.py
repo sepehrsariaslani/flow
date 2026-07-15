@@ -65,3 +65,11 @@ class TestSyncBuiltinAssistant(IntegrationTestCase):
 	def test_assistant_cannot_be_deleted(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "system-generated"):
 			frappe.delete_doc("Flow Agent", ASSISTANT_AGENT_TITLE, ignore_permissions=True)
+
+	def test_assistant_instructions_default_to_persian(self):
+		self.assertIn("پاسخ", ASSISTANT_INSTRUCTIONS)
+		self.assertIn("فارسی", ASSISTANT_INSTRUCTIONS)
+
+	def test_assistant_instructions_require_discovery_before_question(self):
+		self.assertIn("Before asking the user", ASSISTANT_INSTRUCTIONS)
+		self.assertIn("search_records", ASSISTANT_INSTRUCTIONS)

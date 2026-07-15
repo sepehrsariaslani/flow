@@ -12,6 +12,7 @@ from flow.tools.builtins import (
 	execute,
 	find_doctypes,
 	read,
+	search_records,
 	sync_builtin_tools,
 	update,
 )
@@ -21,6 +22,14 @@ class TestFindDoctypes(IntegrationTestCase):
 	def test_search_matches_by_keyword(self):
 		names = {r["name"] for r in find_doctypes(search="ToDo")}
 		self.assertIn("ToDo", names)
+
+	def test_search_matches_erp_hints_for_persian_inventory_words(self):
+		names = {r["name"] for r in find_doctypes(search="انبار", limit=200)}
+		self.assertIn("Warehouse", names)
+
+	def test_search_matches_item_for_persian_product_words(self):
+		names = {r["name"] for r in find_doctypes(search="کالا", limit=200)}
+		self.assertIn("Item", names)
 
 	def test_filters_by_module(self):
 		rows = find_doctypes(module="Core", limit=200)
@@ -88,6 +97,40 @@ class TestRead(IntegrationTestCase):
 		frappe.get_doc({"doctype": "ToDo", "description": "fields probe"}).insert()
 		rows = read(doctype="ToDo", filters={"description": "fields probe"}, fields=["name", "description"])
 		self.assertEqual(rows[0]["description"], "fields probe")
+
+
+class TestSearchRecords(IntegrationTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _new_item(self, **overrides):
+		item_group = frappe.db.get_value("Item Group", {}, "name")
+		stock_uom = frappe.db.get_value("UOM", {}, "name")
+		doc = frappe.get_doc(
+			{
+				"doctype": "Item",
+				"item_code": overrides.get("item_code", "CAKE-OREO-TEST"),
+				"item_name": overrides.get("item_name", "کیک اوریو"),
+				"item_group": item_group,
+				"stock_uom": stock_uom,
+				"is_stock_item": 1,
+			}
+		)
+		if overrides.get("barcode"):
+			doc.append("barcodes", {"barcode": overrides["barcode"], "uom": stock_uom})
+		return doc.insert()
+
+	def test_finds_item_by_persian_item_name(self):
+		item = self._new_item(item_code="CAKE-OREO-NAME")
+		rows = search_records(doctype="Item", text="کیک")
+		self.assertEqual(rows[0]["name"], item.name)
+
+	def test_tries_item_code_and_barcode(self):
+		item = self._new_item(item_code="CAKE-OREO-CODE", item_name="شیرینی", barcode="1234567890")
+		by_code = search_records(doctype="Item", text="OREO-CODE")
+		by_barcode = search_records(doctype="Item", text="1234567890")
+		self.assertEqual(by_code[0]["name"], item.name)
+		self.assertEqual(by_barcode[0]["name"], item.name)
 
 
 class TestExecute(IntegrationTestCase):
@@ -234,4 +277,22 @@ class TestSyncBuiltinTools(IntegrationTestCase):
 		sync_builtin_tools()
 		sync_builtin_tools()
 		count = frappe.db.count("Flow Tool", {"slug": "read"})
+		self.assertEqual(count, 1)
+
+	def test_tolerates_stale_exists_check(self):
+		sync_builtin_tools()
+		original_exists = frappe.db.exists
+
+		def stale_exists(doctype, name=None, *args, **kwargs):
+			if doctype == "Flow Tool" and name == "search_records":
+				return False
+			return original_exists(doctype, name, *args, **kwargs)
+
+		frappe.db.exists = stale_exists
+		try:
+			sync_builtin_tools()
+		finally:
+			frappe.db.exists = original_exists
+
+		count = frappe.db.count("Flow Tool", {"slug": "search_records"})
 		self.assertEqual(count, 1)

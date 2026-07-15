@@ -10,6 +10,12 @@ import frappe
 from frappe import _
 
 from flow.lib.tool import Tool, tool
+from flow.utils.persian import (
+	erp_doctype_hints,
+	erp_record_field_hints,
+	normalize_persian_text,
+	persian_alias_terms,
+)
 from flow.utils.safe_exec import safe_exec
 
 MAX_READ_LIMIT = 200
@@ -17,6 +23,13 @@ LAYOUT_FIELDTYPES = frozenset({"Section Break", "Column Break", "Tab Break", "HT
 _CONFIRM_STR_LIMIT = 120
 _ERROR_LIMIT = 300
 _LIFECYCLE_BY_DOCSTATUS = {0: "submit", 1: "cancel", 2: "amend"}
+
+
+def _can_read_doctype(doctype: str) -> bool:
+	try:
+		return bool(frappe.has_permission(doctype, "read"))
+	except Exception:
+		return False
 
 
 def _summarize_values(values: dict) -> str:
@@ -43,10 +56,36 @@ def find_doctypes(search: str | None = None, module: str | None = None, limit: i
 	filters: dict[str, Any] = {"istable": 0}
 	if module:
 		filters["module"] = module
-	if search:
-		filters["name"] = ["like", f"%{search}%"]
-	rows = frappe.get_all("DocType", filters=filters, fields=["name", "module"], order_by="name", limit=limit)
-	return [r for r in rows if frappe.has_permission(r["name"], "read")]
+	raw_rows = frappe.get_all("DocType", filters=filters, fields=["name", "module"], order_by="name", limit=2000)
+	rows = [r for r in raw_rows if _can_read_doctype(r["name"])]
+	if not search:
+		return rows[:limit]
+
+	terms = persian_alias_terms(search)
+	hints = set(erp_doctype_hints(search))
+	search_text = normalize_persian_text(search).lower()
+	query_terms = [term for term in [search_text, *terms] if term]
+	scored = []
+	for row in rows:
+		name = row["name"]
+		translated = _(name)
+		haystacks = {
+			normalize_persian_text(name).lower(),
+			normalize_persian_text(translated).lower(),
+		}
+		score = 0
+		if name in hints:
+			score += 100
+		for haystack in haystacks:
+			for term in query_terms:
+				if haystack == term:
+					score += 50
+				elif term in haystack:
+					score += 10
+		if score:
+			scored.append((score, row))
+	scored.sort(key=lambda entry: (-entry[0], entry[1]["name"]))
+	return [row for _score, row in scored[:limit]]
 
 
 @tool
@@ -101,6 +140,66 @@ def read(
 		limit=limit,
 		order_by=order_by,
 	)
+
+
+@tool
+def search_records(doctype: str, text: str, limit: int = 20) -> list[dict]:
+	"""Find likely matching records in a DocType by searching common text fields.
+
+	Useful when the user knows a business term but not the exact record name. For ERPNext Items,
+	this searches fields such as item_name, item_code, and barcode before wider fallbacks.
+	"""
+	limit = min(max(int(limit), 1), MAX_READ_LIMIT)
+	fields = erp_record_field_hints(doctype)
+	terms = persian_alias_terms(text)
+	normalized = normalize_persian_text(text)
+	if normalized and normalized not in terms:
+		terms.insert(0, normalized)
+
+	result_fields = ["name", *[field for field in fields if field != "name"][:3]]
+	results: list[dict] = []
+	seen: set[str] = set()
+	for fieldname in fields:
+		for term in terms:
+			if not term:
+				continue
+			rows = frappe.get_list(
+				doctype,
+				filters={fieldname: ["like", f"%{term}%"]},
+				fields=result_fields,
+				limit=limit,
+				order_by="modified desc",
+			)
+			for row in rows:
+				if row["name"] in seen:
+					continue
+				seen.add(row["name"])
+				results.append(row)
+				if len(results) >= limit:
+					return results
+	if doctype == "Item":
+		for term in terms:
+			if not term:
+				continue
+			rows = frappe.get_list(
+				"Item Barcode",
+				filters={"barcode": ["like", f"%{term}%"]},
+				fields=["parent"],
+				limit=limit,
+				parent_doctype="Item",
+			)
+			for row in rows:
+				name = row["parent"]
+				if name in seen:
+					continue
+				item_rows = frappe.get_list("Item", filters={"name": name}, fields=result_fields, limit=1)
+				if not item_rows:
+					continue
+				seen.add(name)
+				results.append(item_rows[0])
+				if len(results) >= limit:
+					return results
+	return results
 
 
 KNOWLEDGE_SEARCH_SLUG = "search_knowledge"
@@ -400,6 +499,7 @@ BUILTIN_TOOLS: list[Tool] = [
 	find_doctypes,
 	describe,
 	read,
+	search_records,
 	search_knowledge,
 	create,
 	update,
@@ -412,19 +512,19 @@ BUILTIN_TOOLS: list[Tool] = [
 def sync_builtin_tools() -> None:
 	"""Upsert builtin tools as Flow Tool rows. Uses db.set_value to bypass the immutability
 	guard in FlowTool.validate (which protects user edits, not system migration)."""
+	from flow.flow.doctype.flow_tool.flow_tool import FlowTool
+
+	frappe.controllers.setdefault(frappe.local.site, {})["Flow Tool"] = FlowTool
 	for builtin in BUILTIN_TOOLS:
 		import_path = f"flow.tools.builtins.{builtin.name}"
+		values = {
+			"import_path": import_path,
+			"description": builtin.description,
+			"requires_confirmation": int(builtin.requires_confirmation),
+			"is_system_generated": 1,
+		}
 		if frappe.db.exists("Flow Tool", builtin.name):
-			frappe.db.set_value(
-				"Flow Tool",
-				builtin.name,
-				{
-					"import_path": import_path,
-					"description": builtin.description,
-					"requires_confirmation": int(builtin.requires_confirmation),
-					"is_system_generated": 1,
-				},
-			)
+			frappe.db.set_value("Flow Tool", builtin.name, values)
 		else:
 			frappe.get_doc(
 				{
@@ -437,4 +537,5 @@ def sync_builtin_tools() -> None:
 					"is_system_generated": 1,
 					"requires_confirmation": int(builtin.requires_confirmation),
 				}
-			).insert(ignore_permissions=True)
+			).insert(ignore_permissions=True, ignore_if_duplicate=True)
+			frappe.db.set_value("Flow Tool", builtin.name, values)
