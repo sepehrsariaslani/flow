@@ -45,6 +45,11 @@ class TestFlowSafeExec(IntegrationTestCase):
 	def test_utils_available(self):
 		self.assertEqual(self._run('result = frappe.utils.cint("5")'), 5)
 
+	def test_get_meta_returns_serializable_dict(self):
+		result = self._run('result = frappe.get_meta("ToDo")')
+		self.assertIsInstance(result, dict)
+		self.assertEqual(result.get("name"), "ToDo")
+
 	def test_blocks_import(self):
 		with self.assertRaises(ImportError):
 			safe_exec("import os")

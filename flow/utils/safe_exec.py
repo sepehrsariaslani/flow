@@ -36,10 +36,24 @@ from frappe.utils.safe_exec import (
 	is_job_queued,
 	safe_enqueue,
 	safe_exec_flags,
-	safer_get_meta,
-	safer_log_error,
 )
 from RestrictedPython import safe_globals
+
+try:
+	from frappe.utils.safe_exec import safer_get_meta
+except ImportError:
+
+	def safer_get_meta(doctype: str, cached: bool = True):
+		meta = frappe.get_meta(doctype, cached=cached)
+		return meta.as_dict() if hasattr(meta, "as_dict") else meta
+
+
+try:
+	from frappe.utils.safe_exec import safer_log_error
+except ImportError:
+
+	def safer_log_error(message: str | None = None, title: str | None = None):
+		return frappe.log_error(message=message, title=title)
 
 
 def safe_exec(
